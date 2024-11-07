@@ -31,35 +31,31 @@ def get_recipe_recommendation(nutrient, foods):
     foods_list = ', '.join(foods)
     prompt = (
         f"I am deficient in {nutrient}. Suggest recipes that are rich in {nutrient} and include ingredients "
-        f"such as {foods_list}. Provide the percentage of the daily recommended intake of {nutrient} in each recipe."
+        f"such as {foods_list}. Provide the percentage of the daily recommended intake of {nutrient} in each recipe. "
+        f"Please format it with a list to show ingredients too in the format of [name] (new line) Ingredients: (ordered list)"
     )
     response = client.chat.completions.create(
-        model="gpt-4",  # You can use "gpt-3.5-turbo" as well
+        model="gpt-3.5-turbo",  # You can use "gpt-3.5-turbo" as well
         messages=[
             {"role": "user", "content": prompt}
         ],
         max_tokens=500
     )
     
-    return response['choices'][0]['message']['content'].strip()
+    return response.choices[0].message.content.strip()
 # Function to generate recipe details for cooking
 def get_recipe_details(recipe_name):
     prompt = (f"Provide a summary of ingredients, cooking instructions, and how to check if {recipe_name} is done. "
-              f"Include recommended internal temperatures if applicable.")
-    
+              f"Include recommended internal temperatures if applicable, as in an actual internal temperature (for instance, specifying 165 degrees for an example)")
     
     response = client.chat.completions.create(
-    messages=[
-        {
-            "role": "user",
-            "content": "Say this is a test",
-        }
-    ],
-    model="gpt-3.5-turbo",
-)
-    
-    
-    return response['choices'][0]['message']['content'].strip()
+        model="gpt-3.5-turbo",  # You can use "gpt-3.5-turbo" as well
+        messages=[
+            {"role": "user", "content": prompt}
+        ],
+        max_tokens=500
+    )
+    return response.choices[0].message.content
 
 # Main function to run the program
 def main():
