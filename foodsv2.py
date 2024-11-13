@@ -1,6 +1,7 @@
 from openai import OpenAI
 import requests
 import json
+import random
 import difflib  # For fuzzy matching
 
 # Load API keys from config.json
@@ -67,14 +68,23 @@ def get_foods_high_in_nutrient(nutrient_name):
             return top_foods
     return []  # Return an empty list if no results found
 
-def get_recipe_recommendation(nutrient, foods):
     foods_list = ', '.join(foods)
     prompt = (
-        f"I am deficient in {nutrient}. Suggest a variety of recipes rich in {nutrient}, such as baked dishes, soups, salads, or other foods, "
-        f"using ingredients like {foods_list}. Only include recipes that contain {nutrient}. "
-        f"Prioritize food items, but if relevant, include up to 2 drinks or smoothies that also contain {nutrient}. "
-        f"Each recipe should be structured as JSON with fields: 'name', 'ingredients', and 'daily_intake_percentage'. "
-        f"Please avoid including the phrase '{nutrient}-rich' or similar nutrient-specific terms in the recipe names."
+        f"I am looking for recipes rich in {nutrient}. Please provide recipes that contain {nutrient} "
+        f"from diverse sources, with a focus on high-{nutrient} options. Avoid using terms like '{nutrient}-packed' "
+        f"in the titles and instead give descriptive recipe names. "
+        f"Respond strictly in JSON array format, with each recipe as an object containing 'name', 'ingredients', "
+        f"and 'daily_intake_percentage'.\n\n"
+        f"The JSON structure should look like this:\n\n"
+        f"[\n"
+        f"  {{\n"
+        f"    \"name\": \"Recipe Name\",\n"
+        f"    \"ingredients\": [\"Ingredient1\", \"Ingredient2\"],\n"
+        f"    \"daily_intake_percentage\": \"25%\"\n"
+        f"  }},\n"
+        f"  ...\n"
+        f"]\n\n"
+        f"Please prioritize options with higher {nutrient} content if possible, and include up to 2 drinks or smoothies."
     )
     
     response = client.chat.completions.create(
@@ -83,61 +93,26 @@ def get_recipe_recommendation(nutrient, foods):
         max_tokens=700
     )
     
-    # Initialize debug flag and raw response for potential troubleshooting
-    debug = False
     raw_response = response.choices[0].message.content.strip()
 
-    # Initialize an empty list to collect parsed recipes
-    recipes_json = []
+    # Parse the response as JSON
+    try:
+        recipes_json = json.loads(raw_response)
 
-    # Split the response into potential JSON blocks and parse each separately
-    for line in raw_response.split("\n\n"):
-        try:
-            # Attempt to parse each block as an individual JSON object
-            parsed_recipe = json.loads(line)
-            
-            # Check for required keys before adding to the list
-            if "name" in parsed_recipe and "ingredients" in parsed_recipe and "daily_intake_percentage" in parsed_recipe:
-                recipes_json.append(parsed_recipe)
-            else:
-                print(f"Skipping incomplete recipe entry: {parsed_recipe}")
-                
-        except json.JSONDecodeError:
-            print(f"Failed to parse JSON for line: {line}")
-            debug = True  # Set debug flag to True to show raw response
-            continue  # Skip this line if it is not valid JSON
-
-    if not recipes_json:
-        print("No valid recipes found in the response.")
-        debug = True
-
-    # Show raw response only if there's an error or debug flag is set
-    if debug:
-        print("Raw AI Response:", raw_response)
-
-    # Separate food recipes and drink recipes
-    food_recipes = []
-    drink_recipes = []
-    
-    for recipe in recipes_json:
-        recipe_lower = recipe["name"].lower()
-        is_drink_or_smoothie = any(drink in recipe_lower for drink in ["smoothie", "drink", "juice"])
-        
-        # Prioritize food recipes over drinks
-        if is_drink_or_smoothie:
-            if len(drink_recipes) < 2:  # Limit to 2 drinks or smoothies
-                drink_recipes.append(recipe)
+        # Verify if it's a JSON array of dictionaries
+        if isinstance(recipes_json, list) and all(isinstance(item, dict) for item in recipes_json):
+            # Sort recipes by daily intake percentage (highest content first)
+            recipes_json.sort(key=lambda x: int(x["daily_intake_percentage"].strip('%')), reverse=True)
+            return recipes_json
         else:
-            food_recipes.append(recipe)
+            print("Unexpected format: AI response is not a JSON array of recipes.")
+            print("Raw AI Response:", raw_response)
+            return []
     
-    # Combine results, prioritizing food recipes and adding drinks if needed
-    filtered_recipes = food_recipes[:10]  # Start with up to 10 food recipes
-    if len(filtered_recipes) < 10:
-        filtered_recipes.extend(drink_recipes[:10 - len(filtered_recipes)])  # Add drinks if more are needed
-
-    return filtered_recipes
-
-
+    except json.JSONDecodeError:
+        print("Failed to parse JSON response. Showing raw AI response for troubleshooting.")
+        print("Raw AI Response:", raw_response)
+        return []
 
 def get_recipe_details(recipe_name):
     prompt = (f"Provide a summary of ingredients, cooking instructions, and how to check if {recipe_name} is done. "
@@ -179,10 +154,73 @@ def get_youtube_tutorial(recipe_name):
     return "No specific tutorial found. Try searching YouTube for more options."
 
 
-# Main function to run the program
+def get_recipe_recommendation(nutrient, foods, preference=None):
+    # Rotate food descriptions or related terms to encourage variance
+    variability_terms = [
+        f"rich in {nutrient}",
+        f"high in {nutrient} content",
+        f"loaded with {nutrient}",
+        f"containing {nutrient}"
+    ]
+    nutrient_description = random.choice(variability_terms)  # Pick a random description for variety
+    
+    foods_list = ', '.join(foods)
+    preference_text = f" that are {preference}" if preference else ""
+
+    prompt = (
+        f"I am looking for recipes {nutrient_description}{preference_text}. "
+        f"Please provide a variety of recipes with high-{nutrient} content, focusing on diverse sources. "
+        f"Exclude titles like '{nutrient}-packed' and instead provide descriptive recipe names. "
+        f"Format the response as a JSON array, with each recipe containing 'name', 'ingredients', and 'daily_intake_percentage'. "
+        f"The structure should be as follows:\n\n"
+        f"[\n"
+        f"  {{\n"
+        f"    \"name\": \"Recipe Name\",\n"
+        f"    \"ingredients\": [\"Ingredient1\", \"Ingredient2\"],\n"
+        f"    \"daily_intake_percentage\": \"25%\"\n"
+        f"  }},\n"
+        f"  ...\n"
+        f"]\n\n"
+        f"Please provide around 7-10 recipes, prioritize higher {nutrient} content, and include no more than 2 drinks or smoothies if relevant."
+    )
+    
+    # Use a higher temperature to encourage variance in the results
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=700,
+        temperature=0.7  # Higher temperature for more varied results
+    )
+    
+    raw_response = response.choices[0].message.content.strip()
+
+    # Parse the response as JSON
+    try:
+        recipes_json = json.loads(raw_response)
+
+        # Verify if it's a JSON array of dictionaries
+        if isinstance(recipes_json, list) and all(isinstance(item, dict) for item in recipes_json):
+            # Sort recipes by daily intake percentage (highest content first)
+            recipes_json.sort(key=lambda x: int(x["daily_intake_percentage"].strip('%')), reverse=True)
+            return recipes_json
+        else:
+            print("Unexpected format: AI response is not a JSON array of recipes.")
+            print("Raw AI Response:", raw_response)
+            return []
+    
+    except json.JSONDecodeError:
+        print("Failed to parse JSON response. Showing raw AI response for troubleshooting.")
+        print("Raw AI Response:", raw_response)
+        return []
+
+# Extend the main function to ask for preferences
 def main():
     nutrient = input("Enter the nutrient you're deficient in (e.g., Iron, Calcium, Vitamin C): ")
     standardized_nutrient = standardize_nutrient_name(nutrient)
+    
+    # Prompt the user for recipe preferences
+    preference = input("Any specific dietary preference? (e.g., gluten-free, vegan, pescatarian, meat-based): ").strip().lower()
+    preference = preference if preference else None  # Set to None if empty
 
     print("\nFinding foods rich in that nutrient...")
     foods = get_foods_high_in_nutrient(standardized_nutrient)
@@ -194,7 +232,7 @@ def main():
         return
 
     print("\nFetching recipe recommendations...")
-    recipes = get_recipe_recommendation(nutrient, foods)
+    recipes = get_recipe_recommendation(nutrient, foods, preference)
 
     if not recipes:
         print("No recipes found with the specified nutrient.")
